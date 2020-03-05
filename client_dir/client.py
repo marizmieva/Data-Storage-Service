@@ -73,9 +73,9 @@ def client_protocol(csoc):
 
 def main():
     if len(sys.argv) > 1:
-        port = sys.argv[1]
+        port = int(sys.argv[1])
     if len(sys.argv) > 2:
-        chunk_size = sys.argv[2]
+        chunk_size = int(sys.argv[2])
 
     s = socket.socket()    
     host = socket.gethostname()     

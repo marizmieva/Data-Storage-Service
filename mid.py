@@ -4,18 +4,24 @@ import os
 import logging
 
 import sys
-from pathlib import Path
+from pathlib import path
 
 
 logging.basicConfig(level=logging.DEBUG)
 # logger = logging.getLogger('data_storage')
 logger = logging.getLogger('data_storage.server')
 
+ACCOUNT = "acc"
+LOGIN = "login"
+LOGOUT = "logout"
+
+LIST = "list"
 
 DOWNLOAD = "download"
 UPLOAD = "upload"
-CLOSE = "close"
 DELETE = "delete"
+
+
 
 port =  6000
 chunk_size = 32
@@ -29,6 +35,8 @@ def is_accessible(file_name):
         return False
     return True
 
+
+def transfer_from_storage(client_soc, )
 
 def send_message(csoc, str):
     message = bytearray(str, 'utf-8')
@@ -63,7 +71,7 @@ def send_file(csoc, file_name):
 def server_protocol(csoc):
     while True:
         data = csoc.recv(chunk_size)
-        logger.info(data)
+        print(data)
         command, file_name = (data.decode("utf-8")).split()
         logger.info(f"received {command} and {file_name}")
         if command == DELETE and is_accessible(file_name):
@@ -75,7 +83,7 @@ def server_protocol(csoc):
         elif command == UPLOAD:
             receive_file(csoc, file_name)
         elif command == DOWNLOAD and is_accessible(file_name):
-                send_file(csoc, file_name)
+            send_file(csoc, file_name)
         elif command == CLOSE:
             csoc.close()
             logger.info('connection closed')
@@ -89,9 +97,9 @@ def server_protocol(csoc):
 def main():
 
     if len(sys.argv) > 1:
-        port = int(sys.argv[1])
+        port = sys.argv[1]
     if len(sys.argv) > 2:
-        chunk_size = int(sys.argv[2])
+        chunk_size = sys.argv[2]
 
     s = socket.socket()             # Create a socket object
     host = socket.gethostname()     # Get local machine name
