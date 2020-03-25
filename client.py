@@ -26,7 +26,7 @@ LIST = "list"
 CLOSE = "close"
 
 port =  6000
-self.chunk_size = 32
+chunk_size = 32
 
 fh = logging.FileHandler('logfile.log')
 logging.basicConfig(level=logging.DEBUG)
@@ -45,7 +45,7 @@ class Client:
         self.port = port
         self.dir_path = dir_path
         self.connection_name = connection_name
-        self.self.chunk_size = self.chunk_size
+        self.chunk_size = chunk_size
     
     def connect(self):
         try:
@@ -93,7 +93,7 @@ class Client:
         chunk = b''
         while chunk.find(stop_phrase) == -1:
             print(chunk)
-            chunk = get_instructions(self.socket, self.chunk_size, 0)
+            chunk = get_instructions(self.socket, self.chunk_size)
 
     def client_protocol(self):
         instructions = get_instructions(self.socket, self.chunk_size)
@@ -147,7 +147,7 @@ class Client:
 def main():
 
     if len(sys.argv) > 1:
-        dir_path = Path.cwd() + '/' + str(sys.argv[1])
+        dir_path = str(Path.cwd()) + '/' + str(sys.argv[1])
     else:
         raise ValueError("STORAGE NODE NOT IDENTIFIED")
 
