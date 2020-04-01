@@ -6,13 +6,15 @@ import os
 import pathlib as pl
 from typing import List
 import util
-from getpass import getpass
+
+import random
+from util import chunk_size
 
 
 fh = logging.FileHandler('logfile.log')
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG, filemode = "w")
 # logger = logging.getLogger('data_storage')
-logger = logging.getLogger('data_storage.server')
+logger = logging.getLogger('data_storage.middleware')
 logger.addHandler(fh)
 
 ACCOUNT = "acc"
@@ -29,9 +31,17 @@ CLOSE = "close"
 
 IDENTITY = 'id'
 client_port =  6000
-chunk_size = 32
 
-
+def test_assembly():
+    a = b = 0
+    while a == b:
+        a = random.randint(0, 3)
+        b = random.randint(0, 3)
+    
+    if a > b:
+        return b, a
+    else:
+        return a, b
 
 
 class Node:
@@ -39,35 +49,40 @@ class Node:
     socket: socket.socket
     host: int 
     port: int 
+    server_id: str
     #name:str
 
     def __init__(self, host, port):
         self.socket = socket.socket()
         self.host = host
         self.port = port
-        #self.socket.bind((host, port))
+        self.is_connected = False
+        self.chunk_size = chunk_size
+        
     
     def connect(self):
         try:
             self.socket.connect((self.host, self.port))
-            is_connected = True;
+            self.is_connected = True
+            self.server_id = self.name()
         except:
-            logger.error(f"{self.port} failed to connect in node")
-            is_connected = False
+            self.is_connected = False
 
     def name(self):
-        util.send_message(self.socket, IDENTITY)
-        identity = socket.recv(8)
-        return identity.decode("utf-8")
+        util.send_message(self.socket, IDENTITY, self.chunk_size)
+        self.server_id = util.get_instructions(self.socket, self.chunk_size)
+        
+        #throwaway = util.get_instructions(self.socket, self.chunk_size)
 
+        #logger.debug(f'throwaway chunk = {throwaway}')
+        return self.server_id
 
 
 def get_ports():
     if (len(sys.argv) < 5):
         raise ValueError("NO COMMAND LINE ARGUMENTS FOUND")
     else:
-        return [ int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]),int(sys.argv[4]), int(sys.argv[5])]
-
+        return [int(i) for i in sys.argv[1:]]
 
 class Middleware:
     port: int
@@ -77,167 +92,174 @@ class Middleware:
     directory: List[str]
     client_socket: socket.socket
     client_port: int
-    def __init__(self, chunk_size):
+    def __init__(self):
 
         self.ports = get_ports()
         self.host = socket.gethostname()
+        self.chunk_size = chunk_size
+        self.path = str(os.getcwd())
+        self.directory = []
+
         self.data_nodes = [Node(self.host, port) for port in self.ports[:-1]]
         self.client_port = self.ports[-1]
-        self.chunk_size = chunk_size // 4
-        self.path = str(os.getcwd())
         iteration_count = 0
         connected_nodes = 0
-        while (connected_nodes < 2 and iteration_count < 4):  # 4 is picked arbitrarily
+        while (connected_nodes <= 4 and iteration_count < 4):  # 4 is picked arbitrarily
+            iteration_count += 1
             for node in self.data_nodes:
                 try:
                     node.connect()
-                    logger.info(f"{node.port} bound successfully in middleware")
                     connected_nodes += 1
-
                 except:
-                    logger.warning(f"{node.port} didn't bind in middleware")
-            iteration_count += 1
-        if iteration_count == 4:
-            raise Exception("We were unable to connect to all data nodes")
-        self.client_socket = self.make_client_socket()
-
-    def make_client_socket(self):
-        temp_socket = socket.socket()
-        temp_socket.bind(self.host, self.ports[-1])
-        logger.info(f'established a client socket')
-        return temp_socket
-
-    def connect_to_client(self):
-        connection.listen(5)
-        logger.info(f'listening for client socket')
-
-    def list_all(self):
-        chunk = b''
-        chunk = util.get_instructions(self.data_node[0].socket, self.chunk_size, False, False)
-        while chunk.find(util.stop_phrase.encode("utf-8")) == -1:
-            util.send_message(connection, chunk)
-            self.directory.append(chunk.decode('utf-8'))
-            chunk = util.get_instructions(self.data_node[0].socket, self.chunk_size, False, False)
-
-    def create_credentials(self, connection):
-        util.send_message(connection, 'username:')
-        username = util.get_instructions(connection, self.chunk_size)
+                    logger.error(f"{node.port} didn't bind in middleware")
         
-        while not passwords_match:
-            util.send_message(connection, 'password:')
-            password = util.get_instructions(connection, self.chunk_size)
-            
-            repeat_password = get_instruction(connection, self.chunk_size)
 
-            if password == repeat_password:
-                return usename, password
-            else:
-                util.send_message(connection, 'passwords don\'t match, try again')
-                continue
-    
-    def create_account(self, connection):
-        username, password = self.create_credentials()
-        util.send_message(connection, 'welcome')
+    def list_all(self, client_connection):
+        chunk = b''
+
+        util.send_message(self.data_nodes[0].socket, 'list', self.chunk_size)
+        chunk = util.get_instructions(self.data_nodes[0].socket, self.chunk_size)
+
+        if chunk == '-1':
+                print('something went wrong')
+                return False
+
+        while chunk.find(util.stop_phrase.decode("utf-8")) == -1:
+            util.send_message(client_connection, chunk, self.chunk_size)
+
+            self.directory.append(chunk)
+            chunk = util.get_instructions(self.data_nodes[0].socket, self.chunk_size)
+            if chunk == '-1':
+                print('something went wrong')
+                return False
+        util.send_message(client_connection, util.stop_phrase.decode("utf-8"), self.chunk_size)
+
+    def create_account(self, connection, command):
+        username, password = (util.get_instructions(connection, self.chunk_size, False)).split()
+        #util.send_message(connection, 'welcome', self.chunk_size)
+        logged_in = 0
         for node in self.data_nodes:
-            node.socket.sendall(f"{command} {username} {password}".encode("utf-8"))
-            response = node.socket.recv(self.chunk_size)
-            if response == b'1':
-                util.send_message(connection, 'welcome')
-                return True
-            elif response == b'2':
-                util.send_message(connection, 'error: account already exists, try a different username or login')
-                return False
-            else:
-                util.send_message(connection, 'something went wrong')
-                return False
+            data = f"{command} {username}-{password}"
+            logger.debug("Data: " + data)
 
-    def get_credentials(self, connection):
-        util.send_message(connection, 'username:')
-        username = util.get_instructions(connection, self.chunk_size)
+            util.send_message(node.socket, data, self.chunk_size)
 
-        util.send_message(connection, 'password:')
-        password = util.get_instructions(connection, self.chunk_size)
-        return username, password
+            response = util.get_instructions(node.socket, self.chunk_size)
 
-    def login(self, connection):
-        username, password = self.get_credentials()
+            print(f'\n\n response is {response} len of resp is {len(response)}')
+            if response == '1':
+                util.send_message(connection, 'welcome', self.chunk_size)
+                logged_in += 1
+                
+            elif response == '2':
+                util.send_message(connection, 'error: account already exists, try a different username or login', self.chunk_size)
+            
+            elif response == '-1':
+                util.send_message(connection, 'something went wrong', self.chunk_size)
+        
+        return logged_in == len(self.data_nodes)
+                
 
-        if self.directory.find(f'{username}-{password}') > -1:
-            for node in self.data_nodes:
-                util.send_message(node.socket, f'login {username} {password}')
-                result = util.get_instructions(node.socket)
-                if result == b'1':
-                    continue
-                else:
-                    print('error logging in')
-            util.send_message(connection, 'welcome')
+
+    def login(self, client_connection):
+        credentials = util.get_instructions(client_connection, self.chunk_size)
+        #print(f'got credentials {credentials}')
+        try: 
+            username, password = credentials.split()
+        except:
+            username = -1
+            password = -1
+
+        if username == -1:
+            return False
+
+        logged_in = 0
+
+        for node in self.data_nodes:
+            util.send_message(node.socket, f'login {username}-{password}', self.chunk_size)
+
+            result = util.get_instructions(node.socket, self.chunk_size)
+            logger.debug(f'answer from server {node.host} is {result} type of result is {type(result)}')
+            if result == '1':
+                logged_in += 1
+            else: 
+                util.send_message(client_connection, 'failed to log in', self.chunk_size)
+        
+        if logged_in == len(self.data_nodes):
+            util.send_message(client_connection, 'welcome', self.chunk_size)
+
             return True 
         else:
-            util.send_message(connection, f'incorrect usename or password')
-        return False
-
-    def to_server(self, filename):
-        size = os.path.getsize(self.path + filename)
-        f = open(filename, 'rb')
-        buffer = f.read(4 * (self.chunk_size))
-        while len(buffer) == 4*self.chunk_size:
-            self.distribute_data(buffer)
-            buffer = f.read(4 * (self.chunk_size))
-
-    def from_server(self, filename):
-        pass
+            return False
 
 
-    def run_protocol(self):
+    def delete_file(self, filename):
+        result = 0
+        for node in self.data_nodes:
+            util.send_message(node.socket, f'{DELETE} {filename}', self.chunk_size)
+        return result == len(self.data_nodes)
+
+
+    def run_protocol(self, client_connection):
         logged_in = False
-        connected = False
-
         while True:
-            if not connected:
-                self.client_socket.listen(5)
-                connection, addr = temp_socket.accept()
-                print(f"got connection from {addr}")
-                connected = True
-                connection.util.send_message("enter acc, to create an account or login to log in")
-            else:
-                self.directory = list_all()
-                connection.util.send_message("enter a command")
-                data = connection.recv(32)
-                data = util.get_instructions(connection, self.chunk_size)
+        #    self.directory = self.list_all(client_connection)
+            print('waiting for instructions...')
+            data = util.get_instructions(client_connection, self.chunk_size)
 
-                if data == CLOSE:
-                    connection.close()
-                    self.client_socket = make_client_socket()
-                    connected = False
-                    continue
+            logger.debug(f"Received data from get_instructions: {data}")
+            if data == CLOSE:
+                client_connection.close()
+                return True
+            if data == LOGOUT:
+                for node in self.data_nodes:
+                    util.send_message(node.socket, LOGOUT, self.chunk_size)
+                logged_in = False
+                continue
 
-                if not logged_in:
-                    if data == LOGIN:
-                        logged_in = self.login()
-                    elif data == ACC:
-                        logged_in = self.create_account()
+            if not logged_in:
+                if data.find(LOGIN) > -1:
+                    #self.list_all(client_connection, False)
+                    logged_in = self.login(client_connection)
+                    if logged_in:
+                        #self.list_all(client_connection, False)
+                        logger.info('successful login')
                     else:
-                        util.send_message(connection, 'login or acc to create an account')
+                        logger.info('failed to log in')
+                elif data.find(ACCOUNT) > -1:
+                
+                    logged_in = self.create_account(client_connection, data)
+
                 else:
-                    commands = data.split()
-                    if len(commands) < 2:
-                        if commands[0] == LIST:
-                            self.list_files(connection)
-                        else:
-                            util.send_message(connetion, f"wrong command {data}")
-                    elif len(commands) == 2:
-                        command, filename = commands[0], commands[1]
-                        if command ==  DOWNLOAD:
-                            result = self.from_server(filename, connection)
-                        elif command == UPLOAD:
-                            result = self.to_server(filename, connection)
-                        elif command == DELETE:
-                            result = self.delete_file(filename)
-                        else:
-                            util.send_message(f'wrong command {data}')
+                    util.send_message(client_connection, 'login or acc to create an account', self.chunk_size)
+            else:
+                commands = data.split()
+                if len(commands) < 2:
+                    if commands[0] == LIST:
+                        result = self.list_all(client_connection)
+                    else:
+                        logger.debug(f'{client_connection}, wrong command {commands}, {self.chunk_size}')
+
+                    
+                elif len(commands) == 2:
+                    command, filename = commands[0], commands[1]
+                    if command ==  DOWNLOAD:
+                        result = self.assemble_data(client_connection, filename)
+                        print('------downloaded------')
+                    elif command == UPLOAD:
+                        self.to_servers(client_connection, filename)
+                        print('-------uploaded-------')
+
+                    elif command == DELETE:
+                        result = self.delete_file(filename)
+                        continue
+                    else:
+                        # TODO: handle wrong command without writing it into file: 
+                        # send stop phrase padded with 'wrong message
+                        logger.debug(f'{client_connection}, wrong command {command}, {self.chunk_size}')
 
     
-    def distribute_data(self, data):
+    def distribute_data(self, data:bytes, final_chunk=False):
         '''
         nodeA = chunk0 + chunk2
         nodeB = chunk1 + chunk3
@@ -250,31 +272,69 @@ class Middleware:
         # connected_count = 0
         
         ##data = 
-        for chunk in chunks:
-            connected_count = 0
-            try:
-                self.data_nodes[0].socket.send(chunk[0] + chunk[2])
-            except:
-                connected_count += 1
-            try:
-                self.data_nodes[1].socket.send(chunk[1] + chunk[3])
-            except:
-                connected_count += 1
-            try:
-                self.data_nodes[2].socket.send(util.xor(chunk[0], chunk[1]) + util.xor(chunk[2], chunk[3]))
-            except:
-                connected_count += 1
-            try:
-                self.data_nodes[3].socket.send(util.xor(chunk[2], chunk[1]) + util.xor(chunk[0], util.xor(chunk[2], chunk[3])))
-            except:
-                connected_count += 1
+        print('distribute data ')
+        if final_chunk:
+            chunks = util.process_chunks(data, chunk_size)
+        else:
+            chunks = util.cut_chunks(data)
 
-        if connected_count < 2:
-            logger.error('something is wrong with data distribution')
-        return padded_zeroes_count
+        logger.debug(f'chunks prepared: {chunks}')
 
+        (self.data_nodes[0].socket).sendall(chunks[0] + chunks[2])
+        logger.debug(f'A xor B node')
+        (self.data_nodes[1].socket).sendall(chunks[1] + chunks[3])
+        logger.debug(f'A xor C node')
+        (self.data_nodes[2].socket).sendall(util.xor(chunks[0], chunks[1]) + util.xor(chunks[2], chunks[3]))
+        logger.debug(f'A xor D node')
+        (self.data_nodes[3].socket).sendall(util.xor(chunks[2], chunks[1]) + util.xor(chunks[0], util.xor(chunks[2], chunks[3])))
+        logger.debug(f'B xor d node')
+        return 
     
-    def assemble_data(self):
+    def to_servers(self, client_connection, filename):
+        '''
+        * downloads file to the middleware folder
+        * uses distribute data to split and xor items into chunks for storage
+        * makes sure that the file contains a number of chunks divisible by 4
+        * sends files to the storage nodes
+        '''
+        if not os.path.exists('middle'):
+            os.mkdir('middle')
+        got_chunks_to_middle = util.receive_file(client_connection, f'middle/{filename}', self.chunk_size)
+        print (f'downloaded chunks: {got_chunks_to_middle}')
+        
+        for node in self.data_nodes:
+            util.send_message(node.socket, f'{UPLOAD} {filename}', self.chunk_size)
+        # login, run, foxy, download ch11.txt
+        with open(f'middle/{filename}', 'rb') as f:
+            buffer = f.read(4 * self.chunk_size)
+            last_buffer = f.read(4 * self.chunk_size)
+            while last_buffer:
+                self.distribute_data(buffer)
+                buffer = last_buffer
+                last_buffer = f.read(4 * self.chunk_size)
+            self.distribute_data(buffer, final_chunk=True)
+
+        terminating_sequence = (util.stop_phrase).decode('utf-8')
+        terminating_chunk = f'0{terminating_sequence}'
+        for node in self.data_nodes:
+            util.send_message(node.socket, terminating_chunk, self.chunk_size)
+        return True
+        #while len(buffer) == 4*self.chunk_size
+        
+
+    def find_nodes(self):
+        identities = ""
+        nodes = []
+        count = 0
+
+        for node in self.data_nodes:
+            identities += node.server_id
+            nodes.append(node.socket)
+            count += 1
+            if count == 2:
+                return nodes, identities
+
+    def assemble_data(self, client_connection, file_name):
         '''
         1. AB <= nodeA[0] + nodeB[0] + nodeA[1] + nodeB[1]
         
@@ -296,46 +356,79 @@ class Middleware:
             iii B[0] = xor(nodeD[0], A[1])
             iv  B[1] = xor(nodeC[1], B[0])
         '''
-        count = 0
-        identities = ""
-        nodes = []
-        for node in self.data_nodes:
-            if node.is_connected:
-                identities += node.name()
-                nodes.append(node)
-            count += 1
-            if count == 2:
-                break
+        # n1, n2 = test_assembly()
+        n1, n2 = 0, 1
+        
+        if self.data_nodes[n1].server_id > self.data_nodes[n2].server_id:
+            swap = n1
+            n1 = n2
+            n2 = swap
 
-        file_one = util.receive_file(nodes[0].socket, file_name, self.chunk_size, file_name + identities[0])
-        file_two = util.receive_file(nodes[1].socket, file_name, self.chunk_size,file_name + identities[1])
+        file_one = f'middle/{file_name}{self.data_nodes[n1].server_id}'
+        file_two = f'middle/{file_name}{self.data_nodes[n2].server_id}'
 
+        identities = self.data_nodes[n1].server_id + self.data_nodes[n2].server_id
+        nodes = [self.data_nodes[n1].socket, self.data_nodes[n2].socket]
+
+        util.send_message(nodes[0], f'download {file_name}', self.chunk_size)
+
+        file_one_counter = util.receive_file(self.data_nodes[n1].socket, file_one, self.chunk_size)
+
+        util.send_message(nodes[1], f'download {file_name}', self.chunk_size)
+
+        file_two_counter = util.receive_file(self.data_nodes[n2].socket, file_two, self.chunk_size)
+
+        logger.debug(f"Starting to assemble data using identities={identities}")
         if identities == "AB":
-            util.assembleAB(file_name + identities[0], file_name + identities[1])
+            util.assembleAB(nodes, file_one, file_two)
 
         elif identities == "AC":
-            util.assembleAC(file_name + identities[0], file_name + identities[1])
+            util.assembleAC(nodes, file_one, file_two)
 
         elif identities == "AD":
-            util.assembleAD(file_name + identities[0], file_name + identities[1])
+            util.assembleAD(nodes, file_one, file_two)
 
         elif identities == "BC":
-            util.assembleBC(file_name + identities[0], file_name + identities[1])
+            util.assembleBC(nodes, file_one, file_two)
 
         elif identities == "BD":
-            util.assembleBD(file_name + identities[0], file_name + identities[1])
+            util.assembleBD(nodes, file_one, file_two)
 
         elif identities == 'CD':
-            util.assembleCD(file_name + identities[0], file_name + identities[1])
+            util.assembleCD(nodes, file_one, file_two)
 
         else:
             logger.error(f'{identities} is not a valid combination')
-            util.send_message(self.client_socket.socket, 'servers failed. sorry :(')
-
+            util.send_message(self.client_socket.socket, 'servers failed. sorry :(', self.chunk_size)
+            return False
+        
+        # TODO: Re-read this to comprehend the reasoning
+        # We need this so that we don't accidentally break anything by running middleware from the wrong dir
+        # We need this to be a string because sometimes we forget how to join Path objects and think of them
+        # as strings.
+        full_file_path = str((pl.Path("middle") / file_name).absolute())
+        util.send_file(client_connection, full_file_path, self.chunk_size)
+        
 
 def main():
-    connector = Middleware(32)
-    connector.run_protocol()
+    connector = Middleware()
+    while True:
+        server_socket = socket.socket()
+    
+        if len(sys.argv) > 4:
+            client_port = int(sys.argv[-1]) 
+    
+        server_socket.bind((socket.gethostname(),client_port))
+
+        server_socket.listen(5)
+
+        client_connection, client_addr = server_socket.accept()
+        print ( f'accepted connection from {client_addr}, port {client_connection}, {client_port}')
+        
+        result = connector.run_protocol(client_connection) 
+    return result
+
 
 if __name__ == "__main__":
     main()
+

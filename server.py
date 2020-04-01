@@ -7,11 +7,7 @@ import sys
 from pathlib import Path
 
 import util
-
-logging.basicConfig(level=logging.DEBUG)
-# logger = logging.getLogger('data_storage')
-logger = logging.getLogger('data_storage.server')
-
+from util import chunk_size
 
 LOGIN = "login"
 ACC = "acc"
@@ -25,146 +21,177 @@ LIST = "list"
 ID = 'id'
 CLOSE = "close"
 port =  6000
-chunk_size = 32
+chunk_size = 64
 
-fh = logging.FileHandler('logfile.log')
-logging.basicConfig(level=logging.DEBUG)
+fh = logging.FileHandler('logfile.log', 'w')
 # logger = logging.getLogger('data_storage')
-logger = logging.getLogger('data_storage.server')
+logger = logging.getLogger('server')
 logger.addHandler(fh)
+logger.setLevel(logging.DEBUG)
 
 
-class Node:
-    is_connected: bool
-    def __init__(self, host, port, dir_path):
-        self.socket = socket.socket()
-        self.host = host
-        self.port = port
-        self.dir_path = dir_path
-        #self.socket.bind((host, port))
+
+
+
+def create_account(csoc: socket.socket, dir_path: str, name: str):
     
-    def connect(self):
-        try:
-            self.socket.connect((self.host, self.port))
-            is_connected = True;
-        except:
-            logger.error(f"{self.port} failed to connect in node")
-            is_connected = False
-
-
-def create_account(csoc, dir_path, username, password):
-    dir_list = os.listdir(".")
-    if not dir_list.find(f"{username}-{password}"):
-        os.mkdir(f"{username}-{password}", mode=0o770)
-        return f"{username}-{password}"
-    else:
-        return ""
-
-def login(csoc, dir_path, username, password):
-    dir_list = os.listdir(".")
-    if dir_list.find(f"{username}-{password}"):
-        return f"./{username}-{password}"
-    else:
-        return "./"
-
-def list_acc(csoc, dir_path):
     dir_list = os.listdir(dir_path)
-    dir_list = [i.encode("utf-8") for i in dir_list]
-    for item in dir_list:
-        csoc.sendall(item)
-    csoc.sendall(util.stop_phrase)
     
+    try:
+        dir_list.index(f"{name}")
+        return 2, ""
+
+    except ValueError:
+        os.mkdir(dir_path+f"/{name}")
+        print(f'created a folder at {dir_path}')
+        return 1, f"{name}"
+
+
+def login(csoc: socket.socket, dir_path: str, name: str):
+    dir_list = os.listdir(dir_path)
+    try:
+        dir_list.index(name)
+        return 1, f"{dir_path}/{name}"
+    except ValueError:
+        return 2, dir_path
+        
+
+
+def list_acc(csoc: socket.socket, dir_path: str):
+    dir_list = os.listdir(dir_path)
+    stringy_dir_list = '\n'.join(dir_list)
+
+    logger.info(f'{stringy_dir_list}')
+    dir_list = util.cut_chunks(stringy_dir_list)
+
+    for item in dir_list:
+        util.send_message(csoc, item, chunk_size)
+        util.send_message(csoc, item, chunk_size)
+    logger.info('sent all directory')
+    util.send_message(csoc, (util.stop_phrase).decode('utf-8'), chunk_size)
+
+
 def server_protocol(csoc, dir_path, identity):
 #    dir_path = Path.cwd(
     curr_path = dir_path
     logged_in = False
+    first_time = True
     while True:
-        data = csoc.recv(chunk_size)
-        logger.info(data)
-        command, name = (data.decode("utf-8")).split()
-        logger.info(f"received {command} and {name}")
+        if first_time:
+            print('waiting for instructions...')
+        
+        data = util.get_instructions(csoc, chunk_size)
+
+        if (len(data) == 0) and first_time:
+            if first_time:
+                logger.error(f'in {curr_path}:: data: {data} type {type(data)} len {len(data)}')
+            first_time = False
+            continue
+
+        first_time = True
+
+        if data.find(' ') > -1:
+            command, name = str(data).split()
+            logger.debug(f"in {curr_path}:: received {command} and {name}")
+        else:
+            command = str(data)
+            logger.debug(f'in {curr_path}:: received {command} type of command {type(command)}')
+
         if command == ID:
-            csoc.sendall(identity.encode("utf-8"))
+            util.send_message(csoc, identity, chunk_size)
+            continue
         elif command == CLOSE:
             return True
-        
+
+        elif command == LOGOUT:
+            logged_in = False
+            curr_path = dir_path
+            continue
+
         if logged_in == False:
             if command == LOGIN:
-                curr_path = login(csoc, name)
+                result, curr_path = login(csoc, dir_path, name)
+
                 if (curr_path != dir_path):
-                    csoc.sendall("welcome".encode("utf-8"))
+                    
+                    util.send_message(csoc, result, chunk_size)
                     logged_in = True
                     continue
                 else:
-                    csoc.sendall("wrong username or password")
+                    util.send_message(csoc, result, chunk_size)
                     continue
+
             elif command == ACC:
-                curr_path += create_account(csoc, name)
+                
+                result, curr_path = create_account(csoc, dir_path, name)
                 if curr_path != dir_path:
-                    csoc.sendall("account created".encode("utf-8"))
+                    # account creation is successful
+                    util.send_message(csoc, '1', chunk_size) 
+                    
                 else:
-                    csoc.sendall("account already exists".encode("utf-8"))
+                    # account creation is not successful
+                    util.send_message(csoc, '2', chunk_size)
             else: 
-                csoc.sendall(b'invalid command')
+                # command is unknown
+                util.send_message(csoc, '-1', chunk_size)
                 continue 
 
         elif logged_in == True:
-            if command == DELETE and is_accessible(name):
+            if command == DELETE:
                 try:
-                    os.remove(name);
-                    logger.info(f"{name} removed successfully")
-                except:
-                    logger.error(f"{name} was not removed")
+                    os.remove(f'{curr_path}/{name}')
+                    logger.info(f"{curr_path}/{name}' removed successfully")
+                    
+                except FileNotFoundError:
+                    logger.error(f"{curr_path}/{name}' DNE")
+                    
             elif command == LIST:
+                logger.debug(f'got to {command}')
                 list_acc(csoc, curr_path)
+
             elif command == UPLOAD:
-                util.receive_file(csoc, curr_path, name)
-            elif command == DOWNLOAD and util.is_accessible(name):
-                util.send_file(csoc, curr_path, name)
-            elif command == LOGOUT:
-                curr_path = dir_path
-                logged_in = -1
+                util.receive_file(csoc, f'{curr_path}/{name}', chunk_size)
+
+            elif command == DOWNLOAD:
+                util.send_file(csoc, f'{curr_path}/{name}', chunk_size)
+
             else:
-                csoc.sendall(b'invalid command' + command)
-    
-
-
+                logger.info(f'{csoc} invalid command {command}, {chunk_size}')
 
 def main():
-    chunk_size = 32
+    chunk_size = 64
+    logger.info(f'\nsys.argv = {sys.argv}\n')
     if len(sys.argv) > 1:
-        dir_path = str(Path.cwd()) + '/' + str(sys.argv[1])
-        identity = str(sys.argv[1])
+        identity = sys.argv[1]
+        dir_path = str(Path.cwd()) + '/' + identity
     else:
         raise ValueError("STORAGE NODE NOT IDENTIFIED")
 
     if len(sys.argv) > 2:
+        logger.info(f'\nPort = {sys.argv[2]}\n')
         port = int(sys.argv[2])
     else:
-        raise ValueError(f"PORT FOR NODE {sys.argv[1]} IS NOT IDENTIFIED")
+        raise ValueError(f"PORT FOR NODE {identity} IS NOT IDENTIFIED")
 
     if len(sys.argv) > 3:
         chunk_size = int(sys.argv[3])
     else:
         logger.info(f"defaulting to chunk size {chunk_size}")
-
-    s = socket.socket()             # Create a socket object
-    host = socket.gethostname()     # Get local machine name
-    s.bind((host, port))            # Bind to the port
-    s.listen(5)                     # Now wait for client connection.
-
-    print  ('Server listening....')
-
     while True:
-        conn, addr = s.accept()     # Establish connection with client.
-        print('Got connection from', addr)
-        # data = conn.recv(chunk_size)
-        # print('Connection received', repr(data))
+        s = socket.socket()             # Create a socket object
+        host = socket.gethostname()     # Get local machine name
+        s.bind((host, port))            # Bind to the port
+        s.listen(5)                     # Now wait for client connection.
 
-        result = server_protocol(conn, dir_path, identity)
+        print  ('Server listening....')
 
-        conn.send('Thank you for connecting')
-        conn.close()
+        while True:
+            s.listen(5)
+            conn, addr = s.accept()     # Establish connection with client.
+            print('Got connection from', addr)
+
+            result = server_protocol(conn, dir_path, identity)
+    conn.close()
 
 
 
