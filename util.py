@@ -6,7 +6,7 @@ import sys
 import socket
 import logging
 
-
+DEBUG = True
 chunk_size = 64
 stop_phrase = b"<><><><<<<<>>><>>>"
 fh = logging.FileHandler('logfile.log')
@@ -14,6 +14,9 @@ logging.basicConfig(level=logging.DEBUG)
 # logger = logging.getLogger('data_storage')
 logger = logging.getLogger('data_storage.server')
 logger.addHandler(fh)
+if not DEBUG:
+    logging.disable(logging.DEBUG)
+
 
 def cut_chunks(lst):
     return [lst[i * chunk_size : (i + 1) * chunk_size] for i in range((len(lst) + chunk_size - 1) // chunk_size)]
@@ -273,7 +276,7 @@ def send_message(csoc: socket.socket, message:str, chunk_size:int):
     csoc.sendall(data)
 
 
-def receive_file(csoc: socket.socket, file_name: str, chunk_size: int):
+def receive_file(csoc: socket.socket, file_name: str, chunk_size: int, final_client_file_is_to_be_received=False):
     previous_chunk = b''
     data = b''
     num_chunks = 0
@@ -290,15 +293,22 @@ def receive_file(csoc: socket.socket, file_name: str, chunk_size: int):
         logger.debug(f"Received: {data}")
         if stop_phrase_index != -1:
             nullbyte_count = int(data[:stop_phrase_index].decode("UTF-8"))
-                # Would not work correctly if it == 0 so we need this check
+            # Would not work correctly if it == 0 so we need this check
             if nullbyte_count > 0: 
                 # cut off padding
                 previous_chunk = previous_chunk[:-nullbyte_count]
-                f.write(previous_chunk)
-                break
-            else: 
-                f.write(previous_chunk)
-                break
+            # Dumb hot fix for dumb code
+            if final_client_file_is_to_be_received:
+                try:
+                    dumb_nullbyte_split_char = b"x"
+                    dumb_nullbyte_split_char_index = previous_chunk.rfind(dumb_nullbyte_split_char)
+                    dumb_nullbyte_count_as_str = previous_chunk[dumb_nullbyte_split_char_index + 1:]
+                    end_seq_length = int(dumb_nullbyte_count_as_str)
+                    previous_chunk = previous_chunk[:len(previous_chunk) - end_seq_length]
+                except:
+                    logger.debug("Nu huevo, cho")
+            f.write(previous_chunk)
+            break
             
         else:
             f.write(previous_chunk)

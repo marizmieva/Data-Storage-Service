@@ -182,14 +182,12 @@ class Middleware:
             logger.debug(f'answer from server {node.host} is {result} type of result is {type(result)}')
             if result == '1':
                 logged_in += 1
-            else: 
-                util.send_message(client_connection, 'failed to log in', self.chunk_size)
         
         if logged_in == len(self.data_nodes):
             util.send_message(client_connection, 'welcome', self.chunk_size)
-
             return True 
         else:
+            util.send_message(client_connection, 'failed to log in', self.chunk_size)
             return False
 
 
@@ -291,6 +289,7 @@ class Middleware:
         return 
     
     def to_servers(self, client_connection, filename):
+        # TODO: after fixing padding broke upload
         '''
         * downloads file to the middleware folder
         * uses distribute data to split and xor items into chunks for storage
@@ -356,8 +355,10 @@ class Middleware:
             iii B[0] = xor(nodeD[0], A[1])
             iv  B[1] = xor(nodeC[1], B[0])
         '''
-        # n1, n2 = test_assembly()
-        n1, n2 = 0, 1
+        # randomizes servers that you use for file download
+        n1, n2 = test_assembly()
+        # hardcoded servers A&B as they are the easiest ones to assemble data from
+        # n1, n2 = 0, 1
         
         if self.data_nodes[n1].server_id > self.data_nodes[n2].server_id:
             swap = n1
@@ -402,17 +403,14 @@ class Middleware:
             util.send_message(self.client_socket.socket, 'servers failed. sorry :(', self.chunk_size)
             return False
         
-        # TODO: Re-read this to comprehend the reasoning
-        # We need this so that we don't accidentally break anything by running middleware from the wrong dir
-        # We need this to be a string because sometimes we forget how to join Path objects and think of them
-        # as strings.
         full_file_path = str((pl.Path("middle") / file_name).absolute())
         util.send_file(client_connection, full_file_path, self.chunk_size)
         
 
 def main():
-    connector = Middleware()
+    
     while True:
+        connector = Middleware()
         server_socket = socket.socket()
     
         if len(sys.argv) > 4:
@@ -425,8 +423,13 @@ def main():
         client_connection, client_addr = server_socket.accept()
         print ( f'accepted connection from {client_addr}, port {client_connection}, {client_port}')
         
-        result = connector.run_protocol(client_connection) 
-    return result
+        told_to_exit = connector.run_protocol(client_connection) 
+        if not told_to_exit:
+            print('restarting operation...')
+        else:
+            print('---exit---')
+            return told_to_exit
+    return told_to_exit
 
 
 if __name__ == "__main__":

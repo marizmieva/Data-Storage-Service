@@ -35,14 +35,8 @@ logger = logging.getLogger('data_storage.client')
 logger.addHandler(fh)
 
 
-#   TODO: figure out why client does not recognize successful login confirmation
-#   after a failed login attempt
-
-#   TODO: 
-
 class Client:
     is_connected: bool
-    logged_in: bool
     
     def __init__(self,  client_socket: socket.socket):
         self.dir_path = 'client_dir'
@@ -60,6 +54,7 @@ class Client:
 
         instructions = util.get_instructions(self.socket, self.chunk_size)
 
+        logger.debug(f'command received by client is {instructions}')
         if instructions == 'welcome':
             return True
         else: 
@@ -148,11 +143,14 @@ class Client:
                 else:
                     util.send_message(self.socket, f'{command}', self.chunk_size)
             
-            if command == CLOSE:
-                self.logged_in = False
+            if command.find( CLOSE) > -1:
+                logged_in = False
                 self.socket.close()
-            if command == LOGOUT:
-                self.logged_in = False
+                break
+
+            if command.find(LOGOUT) > -1:
+                logged_in = False
+                continue
                 
             if not logged_in:
                 if command == LOGIN:
@@ -172,7 +170,7 @@ class Client:
                     continue
 
                 if command ==  DOWNLOAD:
-                    util.receive_file(self.socket, self.dir_path + '/' + filename, self.chunk_size)
+                    util.receive_file(self.socket, self.dir_path + '/' + filename, self.chunk_size, True)
 
                 elif command == UPLOAD: 
                     if os.path.exists(file_path):
@@ -208,7 +206,7 @@ def main():
         client_socket.connect((host, middleware_port))
         logger.info(f'bound successfully to {middleware_port}')
 
-    except socket.error as msg: # TODO: figure out the concrete error you want to catch
+    except socket.error as msg: 
         logger.info("Socket binding error: " + str(msg) + "\n" + "Retrying...")
     
     local_client = Client(client_socket)
