@@ -178,7 +178,9 @@ def main():
     logger.info(f'\nsys.argv = {sys.argv}\n')
     if len(sys.argv) > 1:
         identity = sys.argv[1]
+        os.makedirs(identity, exist_ok=True)
         dir_path = str(Path.cwd()) + '/' + identity
+        
     else:
         raise ValueError("STORAGE NODE NOT IDENTIFIED")
 

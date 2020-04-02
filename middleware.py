@@ -121,7 +121,7 @@ class Middleware:
         chunk = util.get_instructions(self.data_nodes[0].socket, self.chunk_size)
 
         if chunk == '-1':
-                print('something went wrong')
+                util.send_message(client_connection, util.stop_phrase.decode("utf-8"), self.chunk_size)
                 return False
 
         while chunk.find(util.stop_phrase.decode("utf-8")) == -1:
@@ -130,12 +130,13 @@ class Middleware:
             self.directory.append(chunk)
             chunk = util.get_instructions(self.data_nodes[0].socket, self.chunk_size)
             if chunk == '-1':
-                print('something went wrong')
+                util.send_message(client_connection, util.stop_phrase.decode("utf-8"), self.chunk_size)
                 return False
         util.send_message(client_connection, util.stop_phrase.decode("utf-8"), self.chunk_size)
+        return True
 
-    def create_account(self, connection, command):
-        username, password = (util.get_instructions(connection, self.chunk_size, False)).split()
+    def create_account(self, client_connection, command):
+        username, password = (util.get_instructions(client_connection, self.chunk_size, False)).split()
         #util.send_message(connection, 'welcome', self.chunk_size)
         logged_in = 0
         for node in self.data_nodes:
@@ -148,15 +149,21 @@ class Middleware:
 
             print(f'\n\n response is {response} len of resp is {len(response)}')
             if response == '1':
-                util.send_message(connection, 'welcome', self.chunk_size)
+                #util.send_message(connection, 'welcome', self.chunk_size)
                 logged_in += 1
                 
             elif response == '2':
-                util.send_message(connection, 'error: account already exists, try a different username or login', self.chunk_size)
+                #util.send_message(connection, 'error: account already exists, try a different username or login', self.chunk_size)
+                continue
             
             elif response == '-1':
-                util.send_message(connection, 'something went wrong', self.chunk_size)
-        
+                util.send_message(client_connection, 'something went wrong', self.chunk_size)
+            
+        if logged_in == len(self.data_nodes):
+            util.send_message(client_connection, 'welcome', self.chunk_size)
+        else:
+            util.send_message(client_connection, 'not welcome', self.chunk_size)
+
         return logged_in == len(self.data_nodes)
                 
 
@@ -296,8 +303,7 @@ class Middleware:
         * makes sure that the file contains a number of chunks divisible by 4
         * sends files to the storage nodes
         '''
-        if not os.path.exists('middle'):
-            os.mkdir('middle')
+        os.makedirs('middle', exist_ok=True)
         got_chunks_to_middle = util.receive_file(client_connection, f'middle/{filename}', self.chunk_size)
         print (f'downloaded chunks: {got_chunks_to_middle}')
         

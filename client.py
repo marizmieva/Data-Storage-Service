@@ -41,8 +41,7 @@ class Client:
     def __init__(self,  client_socket: socket.socket):
         self.dir_path = 'client_dir'
 
-        if not os.path.exists(self.dir_path):
-            os.mkdir(self.dir_path)
+        os.makedirs(self.dir_path, exist_ok=True)
         
         self.socket = client_socket
         self.chunk_size = chunk_size
